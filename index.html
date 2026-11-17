@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><meta name="theme-color" content="#101a26">
+<title>Snack Attack! — Food Fight Frenzy</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,ui-rounded,system-ui,-apple-system,Segoe UI,sans-serif}*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#101a26}body{display:grid;place-items:center;touch-action:none}#game{display:block;width:100vw;height:100dvh;background:#a6e9e7;touch-action:none}#hint{position:fixed;bottom:max(10px,env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);font-size:11px;letter-spacing:.08em;color:#d9e3df9c;pointer-events:none;text-transform:uppercase;white-space:nowrap}
+</style>
+</head>
+<body><canvas id="game" aria-label="Snack Attack platform shooting game"></canvas><div id="hint">Move WASD / arrows · jump Space · aim mouse · fire click · pause Esc</div>
+<script>
+(() => {
+'use strict';
+const canvas=document.querySelector('#game'),ctx=canvas.getContext('2d');
+const W=1280,H=720,worldW=2800,groundY=610;
+let dpr=1,scale=1,offsetX=0,offsetY=0,last=0,elapsed=0,state='title',camera=0,score=0,shake=0;
+const keys={},pointer={x:W*.7,y:H*.5,down:false};
+let player,shots=[],foes=[],bits=[],pickups=[],platforms=[];
+const colors={ink:'#172733',cream:'#fff3d4',orange:'#ff8257',yellow:'#ffd56b',teal:'#44c6b5',blue:'#6ca9eb',pink:'#f28aaa'};
+function resize(){dpr=Math.min(devicePixelRatio||1,2);const cw=innerWidth,ch=innerHeight;canvas.width=Math.floor(cw*dpr);canvas.height=Math.floor(ch*dpr);scale=Math.min(cw/W,ch/H);offsetX=(cw-W*scale)/2;offsetY=(ch-H*scale)/2}
+addEventListener('resize',resize);resize();
+function roundRect(c,x,y,w,h,r,fill,stroke){c.beginPath();c.roundRect(x,y,w,h,r);if(fill){c.fillStyle=fill;c.fill()}if(stroke){c.strokeStyle=stroke;c.lineWidth=2;c.stroke()}}
+function text(s,x,y,size,color=colors.ink,weight=800,align='left'){ctx.font=`${weight} ${size}px Inter,system-ui,sans-serif`;ctx.textAlign=align;ctx.textBaseline='middle';ctx.fillStyle=color;ctx.fillText(s,x,y)}
+function startGame(){
+ state='playing';score=0;camera=0;elapsed=0;shake=0;shots=[];bits=[];pickups=[];
+ platforms=[{x:0,y:610,w:520,h:110},{x:570,y:610,w:420,h:110},{x:1030,y:610,w:570,h:110},{x:1640,y:610,w:410,h:110},{x:2090,y:610,w:710,h:110},
+ {x:270,y:475,w:170,h:22},{x:650,y:490,w:200,h:22},{x:890,y:410,w:150,h:22},{x:1140,y:490,w:210,h:22},{x:1450,y:430,w:180,h:22},{x:1770,y:490,w:200,h:22},{x:2040,y:410,w:180,h:22},{x:2390,y:475,w:220,h:22}];
+ player={x:100,y:530,w:42,h:68,vx:0,vy:0,face:1,hp:5,maxHp:5,ground:false,fire:0,inv:0,weapon:0,aimX:1,aimY:0};
+ foes=[];for(let i=0;i<11;i++){const x=390+i*218;foes.push({x,y:groundY-58,w:42,h:58,vx:0,vy:0,hp:i%4===3?3:2,maxHp:i%4===3?3:2,ground:false,fire:1+i*.36,face:-1,kind:i%4===3?'chef':'food',alive:true,flash:0})}
+}
+function spawnBits(x,y,color,n=8){for(let i=0;i<n;i++){const a=Math.random()*Math.PI*2,s=70+Math.random()*240;bits.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-50,life:.45+Math.random()*.55,color,r:3+Math.random()*5})}}
+function shoot(actor,enemy=false){const ax=actor===player?actor.aimX:actor.face,ay=actor===player?actor.aimY:0;const len=Math.hypot(ax,ay)||1;const speed=enemy?470:760;shots.push({x:actor.x+actor.w/2+ax/len*25,y:actor.y+29+ay/len*20,vx:ax/len*speed,vy:ay/len*speed,life:2.1,r:enemy?8:9,team:enemy?'bad':'good',damage:enemy?1:1,color:enemy?colors.pink:[colors.orange,colors.yellow,colors.teal][player.weapon%3],spin:Math.random()*6});spawnBits(actor.x+actor.w/2+ax*18,actor.y+28,enemy?'#f7a6bb':'#fff0ae',3);if(actor===player){actor.fire=.22;player.weapon=(player.weapon+1)%3}}
+function aimAt(x,y){const px=player.x-camera+player.w/2,py=player.y+30;let dx=x-px,dy=y-py,l=Math.hypot(dx,dy)||1;player.aimX=dx/l;player.aimY=dy/l;if(Math.abs(dx)>10)player.face=Math.sign(dx)}
+function worldPointer(e){const r=canvas.getBoundingClientRect();return{x:(e.clientX-r.left-offsetX)/scale,y:(e.clientY-r.top-offsetY)/scale}}
+canvas.addEventListener('pointermove',e=>{const p=worldPointer(e);pointer.x=p.x;pointer.y=p.y;if(state==='playing'&&e.pointerType!=='touch')aimAt(p.x,p.y)});
+canvas.addEventListener('pointerdown',e=>{e.preventDefault();canvas.setPointerCapture?.(e.pointerId);const p=worldPointer(e);pointer.x=p.x;pointer.y=p.y;pointer.down=true;if(state==='title'||state==='win'||state==='over'){startGame();return}if(state==='paused'){state='playing';return}if(e.pointerType==='touch'){if(p.x<W*.47){touchStart={x:p.x,y:p.y};}else if(p.y>H*.68&&p.x<W*.75){keys.Space=true}else{aimAt(p.x,p.y);shoot(player)}}else{aimAt(p.x,p.y);shoot(player)}});
+canvas.addEventListener('pointerup',e=>{pointer.down=false;keys.Space=false;touchStart=null});
+let touchStart=null;
+addEventListener('keydown',e=>{keys[e.code]=true;if(['ArrowLeft','ArrowRight','ArrowUp','Space'].includes(e.code))e.preventDefault();if(e.code==='Escape'&&state==='playing')state='paused';else if(e.code==='Escape'&&state==='paused')state='playing';if((state==='title'||state==='over'||state==='win')&&(e.code==='Enter'||e.code==='Space'))startGame();if(state==='playing'&&(e.code==='KeyZ'||e.code==='KeyX'))shoot(player)});
+addEventListener('keyup',e=>keys[e.code]=false);addEventListener('blur',()=>{if(state==='playing')state='paused'});
+function overlap(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y}
+function moveBody(o,dt){o.x+=o.vx*dt;for(const p of platforms){if(overlap(o,p)){if(o.vx>0)o.x=p.x-o.w;else if(o.vx<0)o.x=p.x+p.w}}o.y+=o.vy*dt;o.ground=false;for(const p of platforms){if(overlap(o,p)){if(o.vy>0){o.y=p.y-o.h;o.vy=0;o.ground=true}else if(o.vy<0){o.y=p.y+p.h;o.vy=0}}}o.x=Math.max(0,Math.min(worldW-o.w,o.x));if(o.y>H+150){if(o===player){o.hp=0}else{o.y=groundY-o.h;o.vy=0}}}
+function update(dt){elapsed+=dt;if(state!=='playing')return;const left=keys.ArrowLeft||keys.KeyA,right=keys.ArrowRight||keys.KeyD;let dir=(right?1:0)-(left?1:0);
+ if(touchStart){dir=touchStart.x<W*.24?-1:touchStart.x<W*.47?1:0;if(touchStart.y<H*.4&&player.ground)keys.Space=true}
+ player.vx+=(dir*330-player.vx)*Math.min(1,dt*11);if(dir)player.face=dir;
+ if((keys.Space||keys.ArrowUp||keys.KeyW)&&player.ground){player.vy=-650;player.ground=false;spawnBits(player.x+20,player.y+66,'#fff0b2',5)}
+ player.vy=Math.min(900,player.vy+1750*dt);moveBody(player,dt);player.fire=Math.max(0,player.fire-dt);player.inv=Math.max(0,player.inv-dt);
+ if(pointer.down&&!touchStart&&player.fire<=0&&pointer.x>0)shoot(player);
+ for(const f of foes){if(!f.alive)continue;f.flash=Math.max(0,f.flash-dt);const dx=player.x-f.x;f.face=Math.sign(dx)||-1;f.vx=Math.abs(dx)<460?Math.sign(dx)*Math.min(90,Math.abs(dx)*.45):0;f.vy=Math.min(850,f.vy+1700*dt);moveBody(f,dt);f.fire-=dt;if(f.fire<=0&&Math.abs(dx)<650){const aimx=player.x+player.w/2-(f.x+f.w/2),aimy=player.y+32-(f.y+30),l=Math.hypot(aimx,aimy)||1;shots.push({x:f.x+f.w/2,y:f.y+28,vx:aimx/l*420,vy:aimy/l*420,life:2.4,r:8,team:'bad',damage:1,color:colors.pink,spin:Math.random()*6});f.fire=1.5+Math.random()*1.1}}
+ for(const s of shots){s.x+=s.vx*dt;s.y+=s.vy*dt;s.life-=dt;s.vy+= (s.team==='good'?90:0)*dt;
+  if(s.team==='good'){for(const f of foes){if(f.alive&&overlap({x:s.x-s.r,y:s.y-s.r,w:s.r*2,h:s.r*2},f)){f.hp-=1;f.flash=.14;s.life=0;spawnBits(s.x,s.y,s.color,6);if(f.hp<=0){f.alive=false;score+=100;spawnBits(f.x+20,f.y+28,['#fd8d61','#f7d36b','#65cbbb'][Math.floor(Math.random()*3)],15);if(Math.random()<.25)pickups.push({x:f.x,y:f.y,w:24,h:24,life:8})}break}}}else if(player.inv<=0&&overlap({x:s.x-s.r,y:s.y-s.r,w:s.r*2,h:s.r*2},player)){player.hp--;player.inv=1.05;shake=12;s.life=0;spawnBits(player.x+20,player.y+30,colors.pink,10)}
+  for(const p of platforms){if(s.life>0&&s.x>p.x&&s.x<p.x+p.w&&s.y>p.y&&s.y<p.y+p.h){s.life=0;spawnBits(s.x,s.y,s.color,4)}}}
+ shots=shots.filter(s=>s.life>0&&s.x>-50&&s.x<worldW+50);for(const b of bits){b.x+=b.vx*dt;b.y+=b.vy*dt;b.vy+=650*dt;b.life-=dt}bits=bits.filter(b=>b.life>0);
+ for(const p of pickups){p.life-=dt;if(overlap(player,p)){player.hp=Math.min(player.maxHp,player.hp+1);p.life=0;spawnBits(p.x,p.y,colors.teal,8)}}pickups=pickups.filter(p=>p.life>0);
+ camera+=(Math.max(0,Math.min(worldW-W,player.x+player.w/2-W*.42))-camera)*Math.min(1,dt*5);if(shake>0)shake=Math.max(0,shake-dt*35);
+ if(player.hp<=0)state='over';else if(foes.every(f=>!f.alive))state='win';
+}
+function drawBackground(){
+ const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#8bd9d6');g.addColorStop(.64,'#d7f0ce');g.addColorStop(1,'#f8e2ad');ctx.fillStyle=g;ctx.fillRect(0,0,W,H);ctx.fillStyle='#ffe9a8';ctx.beginPath();ctx.arc(1030,124,58,0,Math.PI*2);ctx.fill();
+ for(let layer=0;layer<3;layer++){const y=475+layer*42,par=.13+layer*.13;ctx.fillStyle=['#a1d8bd','#78c7ae','#56ad9e'][layer];ctx.beginPath();ctx.moveTo(0,H);for(let x=-80;x<W+120;x+=40){const wx=x+camera*par;ctx.lineTo(x,y+Math.sin(wx*.006+layer)*36+Math.sin(wx*.014)*13)}ctx.lineTo(W,H);ctx.closePath();ctx.fill()}
+ for(let i=0;i<8;i++){let x=((i*197-camera*.22)%(W+180)+W+180)%(W+180)-70,y=95+(i*71)%230;ctx.fillStyle='rgba(255,255,255,.55)';ctx.beginPath();ctx.ellipse(x,y,34,11,0,0,Math.PI*2);ctx.ellipse(x-15,y+4,18,8,0,0,Math.PI*2);ctx.ellipse(x+15,y+4,21,8,0,0,Math.PI*2);ctx.fill()}
+ for(let i=0;i<8;i++){const x=((i*240-camera*.42)%(W+160)+W+160)%(W+160)-60;ctx.strokeStyle='rgba(35,90,90,.24)';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x,305);ctx.lineTo(x,390);ctx.stroke();ctx.fillStyle=i%2?'#ff9b72':'#ffe181';ctx.beginPath();ctx.moveTo(x,308);ctx.lineTo(x+31,319);ctx.lineTo(x,331);ctx.fill()}
+}
+function drawPlatform(p){roundRect(ctx,p.x-camera,p.y,p.w,p.h,8,'#558a65');roundRect(ctx,p.x-camera,p.y,p.w,12,7,'#a5cf78');ctx.fillStyle='#426b57';for(let x=p.x+18;x<p.x+p.w-5;x+=39){ctx.beginPath();ctx.arc(x-camera,p.y+31,3,0,Math.PI*2);ctx.fill()}if(p.h>30){ctx.fillStyle='rgba(25,70,62,.17)';for(let x=p.x+12;x<p.x+p.w;x+=24)ctx.fillRect(x-camera,p.y+15,3,p.h-15)}}
+function drawShot(s){ctx.save();ctx.translate(s.x-camera,s.y);ctx.rotate(Math.atan2(s.vy,s.vx));ctx.shadowColor=s.color;ctx.shadowBlur=13;roundRect(ctx,-12,-7,24,14,7,s.color,'rgba(255,255,255,.8)');ctx.shadowBlur=0;ctx.fillStyle='#fff3c9';ctx.beginPath();ctx.arc(1,0,3,0,Math.PI*2);ctx.fill();ctx.restore()}
+function drawFighter(o,isPlayer){const x=o.x-camera,y=o.y;ctx.save();if(o.flash>0)ctx.globalAlpha=.55+Math.sin(elapsed*80)*.4;ctx.fillStyle='rgba(39,77,64,.25)';ctx.beginPath();ctx.ellipse(x+o.w/2,y+o.h+3,22,6,0,0,Math.PI*2);ctx.fill();roundRect(ctx,x+6,y+o.h-15,13,16,6,'#283744');roundRect(ctx,x+23,y+o.h-15,13,16,6,'#283744');
+ const shirt=isPlayer?'#49bfa9':o.kind==='chef'?'#f6eee1':'#e89b79',skin=isPlayer?'#ffd19d':'#ffd9a9';roundRect(ctx,x+4,y+24,34,33,12,shirt,'#273a43');roundRect(ctx,x+(o.face>0?0:34),y+31,11,21,5,isPlayer?'#f4b65e':'#c77d62');ctx.fillStyle=skin;ctx.beginPath();ctx.ellipse(x+21,y+19,17,19,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#273a43';ctx.lineWidth=2;ctx.stroke();
+ if(isPlayer){roundRect(ctx,x+3,y+1,36,13,7,'#f1a94f','#273a43');ctx.fillStyle='#fff0c1';ctx.beginPath();ctx.ellipse(x+21,y+3,14,6,0,Math.PI,Math.PI*2);ctx.fill();ctx.fillStyle='#54b789';ctx.fillRect(x+8,y+9,27,3)}else if(o.kind==='chef'){roundRect(ctx,x+9,y-7,25,11,4,'#fff7e8','#273a43');ctx.beginPath();ctx.arc(x+14,y-7,6,Math.PI,0);ctx.arc(x+25,y-7,7,Math.PI,0);ctx.fillStyle='#fff7e8';ctx.fill();ctx.strokeStyle='#273a43';ctx.stroke()}else{ctx.fillStyle='#e65c53';ctx.beginPath();ctx.arc(x+21,y+5,18,Math.PI,Math.PI*2);ctx.fill();ctx.strokeStyle='#273a43';ctx.stroke()}
+ const eyeX=x+21+o.face*6;ctx.fillStyle='#25333c';ctx.beginPath();ctx.arc(eyeX,y+19,2.4,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#9e5148';ctx.lineWidth=1.6;ctx.beginPath();ctx.arc(x+21+o.face*5,y+26,4,.15,Math.PI-.15);ctx.stroke();ctx.save();ctx.translate(x+21,y+39);ctx.scale(o.face,1);ctx.rotate(isPlayer?Math.atan2(player.aimY,Math.abs(player.aimX))*.48:0);
+ // The baguette blaster has a toast barrel, ketchup sight and waffle grip.
+ roundRect(ctx,5,-12,32,14,6,isPlayer?'#e7b45b':'#b7775a','#263943');ctx.fillStyle='#f8d792';ctx.beginPath();ctx.ellipse(32,-5,7,6,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#263943';ctx.lineWidth=2;ctx.stroke();roundRect(ctx,13,-16,11,5,3,'#ec7852','#263943');ctx.fillStyle='#9c603e';ctx.beginPath();ctx.moveTo(12,1);ctx.lineTo(22,1);ctx.lineTo(19,15);ctx.lineTo(11,15);ctx.closePath();ctx.fill();ctx.strokeStyle='#263943';ctx.stroke();ctx.strokeStyle='#ffe7a4';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(8,-7);ctx.lineTo(27,-7);ctx.moveTo(9,-3);ctx.lineTo(25,-3);ctx.stroke();ctx.restore();ctx.restore()}
+function drawWorld(){drawBackground();ctx.save();if(shake)ctx.translate((Math.random()-.5)*shake,(Math.random()-.5)*shake);for(const p of platforms)drawPlatform(p);
+ for(let i=0;i<6;i++){const x=390+i*440-camera;if(x<-70||x>W+70)continue;roundRect(ctx,x,groundY-47,42,45,7,'#d89255','#694f40');ctx.strokeStyle='#f3c681';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(x+6,groundY-40);ctx.lineTo(x+36,groundY-9);ctx.moveTo(x+36,groundY-40);ctx.lineTo(x+6,groundY-9);ctx.stroke();ctx.fillStyle='#f27d5c';ctx.beginPath();ctx.arc(x+21,groundY-25,8,0,Math.PI*2);ctx.fill()}
+ for(const p of pickups){const bob=Math.sin(elapsed*5+p.x)*4;ctx.save();ctx.translate(p.x-camera,p.y+bob);ctx.shadowColor=colors.teal;ctx.shadowBlur=15;ctx.fillStyle='#fff1bc';ctx.beginPath();ctx.arc(12,12,13,0,Math.PI*2);ctx.fill();ctx.shadowBlur=0;text('+',12,12,20,'#35aa8d',900,'center');ctx.restore()}for(const s of shots)drawShot(s);for(const f of foes)if(f.alive)drawFighter(f,false);if(player)drawFighter(player,true);
+ for(const b of bits){ctx.globalAlpha=Math.max(0,b.life);ctx.fillStyle=b.color;ctx.beginPath();ctx.arc(b.x-camera,b.y,b.r,0,Math.PI*2);ctx.fill()}ctx.globalAlpha=1;ctx.restore()}
+function panel(x,y,w,h,alpha=.88){ctx.fillStyle=`rgba(18,34,45,${alpha})`;roundRect(ctx,x,y,w,h,20,ctx.fillStyle,'rgba(255,255,255,.2)')}
+function drawHud(){panel(24,22,310,88,.78);text('SNACK ATTACK',46,48,14,'#ffd56b',900);text('THE GREAT FOOD FIGHT',46,72,12,'#d5e5d8',700);text('SCORE',286,44,10,'#b9d1c7',800,'right');text(String(score).padStart(4,'0'),286,69,20,'#fff3d4',900,'right');panel(W/2-145,27,290,48,.66);const defeated=foes.filter(f=>!f.alive).length;text('CLEAR THE PICNIC!',W/2,44,11,'#dae9dc',900,'center');for(let i=0;i<11;i++){ctx.fillStyle=i<defeated?colors.yellow:'rgba(255,255,255,.2)';ctx.beginPath();ctx.arc(W/2-92+i*18,61,4,0,Math.PI*2);ctx.fill()}
+ panel(W-244,22,220,88,.78);text('HEARTS',W-222,46,11,'#e7d9c2',800);for(let i=0;i<player.maxHp;i++){ctx.fillStyle=i<player.hp?'#fa7483':'rgba(255,255,255,.18)';const x=W-220+i*38,y=75;ctx.beginPath();ctx.moveTo(x,y+7);ctx.bezierCurveTo(x-17,y-3,x-10,y-13,x,y-5);ctx.bezierCurveTo(x+10,y-13,x+17,y-3,x,y+7);ctx.fill()}if(player.hp<=2)text('LOW HP!',W-135,48,10,'#ffb394',900,'center');roundRect(ctx,W-57,128,34,34,10,'rgba(18,34,45,.65)','rgba(255,255,255,.35)');text('Ⅱ',W-40,145,17,'#fff3d4',900,'center');
+ if(innerWidth<850){ctx.globalAlpha=.62;ctx.fillStyle='#17313b';ctx.beginPath();ctx.arc(84,H-92,49,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(W-86,H-100,47,0,Math.PI*2);ctx.fill();text('MOVE',84,H-91,11,'#fff3d4',900,'center');text('FIRE',W-86,H-100,11,'#fff3d4',900,'center');text('JUMP',W-86,H-174,10,'#fff3d4',900,'center');ctx.globalAlpha=1}}
+function overlay(title,subtitle,button,accent=colors.yellow){ctx.fillStyle='rgba(14,26,34,.5)';ctx.fillRect(0,0,W,H);panel(W/2-340,H/2-222,680,444,.96);ctx.save();ctx.translate(W/2,H/2-157);ctx.rotate(-.08);roundRect(ctx,-33,-24,66,42,20,'#bd814c','#fff0c8');roundRect(ctx,-33,-10,66,13,6,'#68bd78');roundRect(ctx,-33,-1,66,12,6,'#ef7655');ctx.fillStyle='#ffe5a0';ctx.beginPath();ctx.ellipse(0,-19,30,11,0,Math.PI,Math.PI*2);ctx.fill();ctx.strokeStyle='#fff0c8';ctx.lineWidth=3;ctx.stroke();ctx.restore();text(title,W/2,H/2-88,42,'#fff3d4',950,'center');text(subtitle,W/2,H/2-44,15,'#c7ddd5',600,'center');
+ if(state==='title'){text('A picnic has turned into a full-on food fight.',W/2,H/2+5,15,'#e3ece1',650,'center');text('Blast the snack squad with your baguette blaster!',W/2,H/2+30,15,'#e3ece1',650,'center')}if(state==='over')text(`FINAL SCORE  ${score}`,W/2,H/2+18,18,'#ffd56b',850,'center');if(state==='win')text(`PICNIC SAVED!   SCORE ${score}`,W/2,H/2+18,18,'#ffd56b',850,'center');roundRect(ctx,W/2-128,H/2+65,256,61,18,accent,'rgba(255,255,255,.8)');text(button,W/2,H/2+96,18,'#24343b',950,'center');if(state==='title'){text('WASD / ARROWS MOVE     SPACE JUMP     MOUSE AIM + CLICK FIRE',W/2,H/2+163,11,'#a9c5bd',800,'center');text('TOUCH: LEFT SIDE MOVE · RIGHT SIDE FIRE · TAP ABOVE TO JUMP',W/2,H/2+187,10,'#90aca6',700,'center')}}
+function draw(){ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,canvas.width,canvas.height);ctx.translate(offsetX,offsetY);ctx.scale(scale,scale);drawWorld();if(state==='playing'||state==='paused')drawHud();if(state==='title')overlay('SNACK ATTACK!','FOOD FIGHT FRENZY','START THE FOOD FIGHT!');if(state==='paused')overlay('PAUSED','Catch your breath. The snacks are still coming!','TAP TO RESUME',colors.teal);if(state==='over')overlay('OH, CRUMBS!','The snack squad got the upper hand.','REMATCH',colors.orange);if(state==='win')overlay('YOU RULE THE PICNIC!','The food fight is over. The snacks surrender!','PLAY AGAIN',colors.teal)}
+function frame(t){const dt=Math.min(.033,(t-last)/1000||0);last=t;update(dt);draw();requestAnimationFrame(frame)}requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
